@@ -2,18 +2,37 @@ use std::{cmp::Ordering, str::FromStr};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 enum HandType {
-    Five,
-    Four,
-    FullHouse,
-    Three,
-    TwoPair,
-    OnePair,
     High,
+    OnePair,
+    TwoPair,
+    Three,
+    FullHouse,
+    Four,
+    Five,
+}
+impl HandType {
+    fn add_joker(&self) -> Self {
+        match self {
+            HandType::High => HandType::OnePair, 
+            HandType::OnePair => HandType::Three,
+            HandType::TwoPair => HandType::FullHouse,
+            HandType::Three => HandType::Four,
+            HandType::FullHouse => HandType::Four,
+            HandType::Four => HandType::Five,
+            HandType::Five => panic!("HandType::Six"),
+        }
+
+    }
 }
 
 const CARD_VARIANT: usize = 13;
+
+trait Card where Self: From<char> + Ord {
+    fn as_usize(&self) -> usize;
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-enum Card {
+enum CardV1 {
     Two,
     Three,
     Four,
@@ -29,7 +48,9 @@ enum Card {
     A,
 }
 
-impl From<char> for Card {
+
+
+impl From<char> for CardV1 {
     fn from(value: char) -> Self {
         match value {
             '2' => Self::Two,
@@ -50,12 +71,68 @@ impl From<char> for Card {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd)]
-struct Hand {
-    cards: Vec<Card>,
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum CardV2 {
+    J,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    T,
+    Q,
+    K,
+    A,
 }
 
-impl Ord for Hand {
+
+impl From<char> for CardV2 {
+    fn from(value: char) -> Self {
+        match value {
+            '2' => Self::Two,
+            '3' => Self::Three,
+            '4' => Self::Four,
+            '5' => Self::Five,
+            '6' => Self::Six,
+            '7' => Self::Seven,
+            '8' => Self::Eight,
+            '9' => Self::Nine,
+            'T' => Self::T,
+            'J' => Self::J,
+            'Q' => Self::Q,
+            'K' => Self::K,
+            'A' => Self::A,
+            _ => panic!("Unknown card {value}"),
+        }
+    }
+}
+
+impl Card for CardV1 {
+    fn as_usize(&self) -> usize {
+        *self as usize
+    }
+}
+
+
+impl Card for CardV2 {
+    fn as_usize(&self) -> usize {
+        if matches!(self, CardV2::J) {
+            usize::MAX
+        } else {
+            *self as usize
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
+struct Hand<T: Card> {
+    cards: Vec<T>,
+}
+
+impl<T:Card> Ord for Hand<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let self_type = self.hand_type();
         let other_type = other.hand_type();
@@ -76,49 +153,61 @@ impl Ord for Hand {
     }
 }
 
-impl Hand {
+impl<T:Card> Hand<T> {
     fn hand_type(&self) -> HandType {
         let mut pair_nb = 0;
         let mut has_three = false;
         let mut cards_count = [0; CARD_VARIANT];
+        let mut nb_joker = 0;
         for card in &self.cards {
-            cards_count[*card as usize] += 1;
+            let card_value = card.as_usize();
+            if card_value == usize::MAX {
+                nb_joker +=1;
+            } else {
+                cards_count[card_value] += 1;
+            }
         }
+        let mut hand_type = HandType::High;
+
         for count in cards_count {
-            if count == 5 {
+            if count == 5 || nb_joker == 5 {
                 return HandType::Five;
             } else if count == 4 {
-                return HandType::Four;
+                hand_type = HandType::Four;
             } else if count == 3 {
                 has_three = true;
             } else if count == 2 {
                 pair_nb += 1;
             }
         }
+
         if has_three {
             if pair_nb == 1 {
-                return HandType::FullHouse;
+               hand_type =  HandType::FullHouse;
             } else {
-                return HandType::Three;
+                hand_type = HandType::Three;
             }
         } else {
             if pair_nb == 2 {
-                return HandType::TwoPair;
+                hand_type = HandType::TwoPair;
             } else if pair_nb == 1 {
-                return HandType::OnePair;
-            } else {
-                return HandType::High;
-            }
+                hand_type = HandType::OnePair;
+            }  
         }
+        
+        for _ in 0..nb_joker {
+            hand_type = hand_type.add_joker();
+        }
+        return hand_type;
     }
 }
 
 #[derive(Debug)]
-struct CardsBids {
-    cards_bids: Vec<(Hand, usize)>,
+struct CardsBids<T: Card> {
+    cards_bids: Vec<(Hand<T>, usize)>,
 }
 
-impl FromStr for CardsBids {
+impl<T:Card> FromStr for CardsBids<T> {
     type Err = ();
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
@@ -127,7 +216,7 @@ impl FromStr for CardsBids {
             .map(|line| {
                 let (raw_hand, rank) = line.split_once(" ").unwrap();
 
-                let cards: Vec<_> = raw_hand.chars().map(Card::from).collect();
+                let cards: Vec<_> = raw_hand.chars().map(T::from).collect();
                 let rank: usize = rank.parse().unwrap();
                 (Hand { cards }, rank)
             })
@@ -137,25 +226,18 @@ impl FromStr for CardsBids {
     }
 }
 
-impl CardsBids {
+impl<T:Card> CardsBids<T> {
     fn sort_hand(&mut self) {
         self.cards_bids.sort_by(|(a, _), (b, _)| a.cmp(b));
     }
 }
 
-fn solve1() -> usize {
+fn solve<T:Card>() -> usize {
     let input = include_str!("../input.txt");
 
-    let mut hands: CardsBids = input.parse().unwrap();
+    let mut hands: CardsBids<T> = input.parse().unwrap();
 
     hands.sort_hand();
-
-
-    for hand in &hands.cards_bids {
-        dbg!(hand, hand.0.hand_type());
-    }
-    println!("{hands:?}");
-    dbg!(Card::T.cmp(&Card::A));
 
     hands
         .cards_bids
@@ -166,5 +248,6 @@ fn solve1() -> usize {
 }
 
 fn main() {
-    dbg!(solve1());
+    dbg!(solve::<CardV1>());
+    dbg!(solve::<CardV2>());
 }
